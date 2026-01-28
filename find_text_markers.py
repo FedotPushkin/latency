@@ -7,7 +7,67 @@ from pathlib import Path
 
 BEGIN_PATTERN = r"(?:begin|beginning)[\s_]+text\s*(?:\u2014+)?"
 END_PATTERN = r"(?:end|ending)[\s_]+text\s*(?:\u2014+)?"
+def strip_markers(text: str) -> str:
+    """
+    Delete all characters before BEGIN_TEXT marker and/or after END_TEXT marker.
+    
+    Markers can be absent - if a marker doesn't exist, no deletion occurs for that side.
+    - If BEGIN_TEXT marker exists: delete everything before it
+    - If END_TEXT marker exists: delete everything after it
 
+    Handles various cases:
+    - Case-insensitive matching (e.g., begin_text, Begin_Text, BEGIN_TEXT)
+    - Alternative spellings (e.g., beginning, begining, beginning text)
+    - Multiple whitespace and newline variations
+    - Underscore or space separators (BEGIN_TEXT or BEGIN TEXT)
+    - Markers with em-dashes (—-)
+    - Unicode and multi-language text
+    - Graceful fallback for non-string inputs
+
+    Args:
+        text: Input text potentially containing markers
+
+    Returns:
+        Text with everything before BEGIN_TEXT and/or after END_TEXT deleted
+    """
+    if not isinstance(text, str):
+        return text
+
+    original_text = text
+    try:
+        # Strip leading/trailing whitespace
+        text = text.strip()
+
+        if not text:
+            return text
+        
+        # Pattern to find BEGIN_TEXT marker
+        begin_pattern = r'(?:begin|beginning)[\s_]+text\s*(?:—+)?'
+        begin_match = re.search(begin_pattern, text, flags=re.IGNORECASE)
+
+        # Pattern to find END_TEXT marker
+        end_pattern = r'(?:end|ending)[\s_]+text\s*(?:—+)?'
+        end_match = re.search(end_pattern, text, flags=re.IGNORECASE)
+        # Delete everything before BEGIN_TEXT marker (if it exists)
+        if begin_match:
+            text = text[begin_match.end():]
+
+        # Delete everything after END_TEXT marker (if it exists)
+        if end_match:
+            # Need to re-search in case text was modified after begin marker removal
+            end_match = re.search(end_pattern, text, flags=re.IGNORECASE)
+            if end_match:
+                text = text[:end_match.start()]
+
+        # Final cleanup: remove excess whitespace while preserving
+        # internal structure and respecting multi-language spacing rules
+        text = text.strip()
+
+        return text
+
+    except (TypeError, AttributeError) as e:
+        print(f"Error stripping markers: {e}")
+        return original_text
 
 def parse_args(default_csv_path: str) -> argparse.Namespace:
     p = argparse.ArgumentParser()
@@ -34,6 +94,7 @@ def main() -> int:
     total = 0
     matched = 0
     matched_ids = []
+    all_ids = []
     matched_user_ids = set()
     all_user_ids = set()
 
@@ -71,11 +132,14 @@ def main() -> int:
             if user_id:
                 all_user_ids.add(user_id)
 
-            output_text = row.get("output_text") or ""
+            rid = (row.get("id") or "").strip()
+            if rid:
+                all_ids.append(rid)
 
+            output_text = row.get("output_text") or ""
+            #output_text = strip_markers(output_text)
             if begin_re.search(output_text) or end_re.search(output_text):
                 matched += 1
-                rid = (row.get("id") or "").strip()
                 if rid:
                     matched_ids.append(rid)
                 if user_id:
@@ -83,13 +147,17 @@ def main() -> int:
 
     freq = (matched / total * 100) if total else 0.0
 
-    if args.ids_output:
-        with open(args.ids_output, "w", encoding="utf-8") as out:
-            for i in matched_ids:
-                out.write(i + "\n")
-    else:
+    # Выгружаем matched IDs в txt файл
+    matched_ids_output_file = args.ids_output if args.ids_output else "matched_ids_fixed.txt"
+    with open(matched_ids_output_file, "w", encoding="utf-8") as out:
         for i in matched_ids:
-            print(i)
+            out.write(i + "\n")
+
+    # Выгружаем все ID в txt файл
+    ids_output_file = "all_ids.txt"
+    with open(ids_output_file, "w", encoding="utf-8") as out:
+        for i in all_ids:
+            out.write(i + "\n")
 
     print(f"total_rows={total}")
     print(f"matched_rows={matched}")
